@@ -1,0 +1,7 @@
+.venv/
+.env
+credentials.json
+.edith-drive-token.json
+__pycache__/
+*.pyc
+.edith-utterance.wav
