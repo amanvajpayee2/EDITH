@@ -147,6 +147,32 @@ class GoogleDriveStorage:
                     fields="id",
                 ).execute()
 
+    def upload_binary(
+        self, collection: str, name: str, path: str | Any, mime_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        from googleapiclient.http import MediaFileUpload
+
+        with self._lock:
+            folder_id = self._folder_id(collection, self._folder_id(self.folder_name))
+            body: dict[str, Any] = {"name": name, "parents": [folder_id]}
+            if metadata:
+                body["description"] = "; ".join(f"{key}={value}" for key, value in metadata.items())
+            result = self._api().files().create(
+                body=body,
+                media_body=MediaFileUpload(str(path), mimetype=mime_type, resumable=True),
+                fields="id",
+            ).execute()
+            return result["id"]
+
+    def delete_file(self, file_id: str) -> None:
+        with self._lock:
+            self._api().files().delete(fileId=file_id).execute()
+
+    # Kept as a descriptive alias for callers handling uploaded media.
+    def delete_binary(self, file_id: str) -> None:
+        self.delete_file(file_id)
+
     def list_json(self, collection: str) -> list[tuple[str, Any]]:
         with self._lock:
             folder_id = self._folder_id(collection, self._folder_id(self.folder_name))
