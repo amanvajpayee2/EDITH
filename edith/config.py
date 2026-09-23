@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import os
-from typing import Optional
+from typing import Optional, Tuple
+from datetime import time
 
 from dotenv import load_dotenv
 
@@ -33,6 +34,33 @@ class Settings:
     daily_prompt_hour: int
     daily_prompt_minute: int
     daily_prompt_retry_minutes: int
+    camera_presence_enabled: bool
+    camera_index: int
+    camera_sample_interval_seconds: float
+    camera_quiet_start: Optional[time]
+    camera_quiet_end: Optional[time]
+    camera_min_consecutive_detections: int
+    camera_min_consecutive_absence: int
+    owner_verification_enabled: bool
+    owner_encoding_file: str
+    owner_return_after_minutes: int
+    owner_face_tolerance: float
+    visitor_recording_enabled: bool
+    visitor_drive_collection: str
+    visitor_max_session_duration_seconds: float
+    visitor_recording_announcement: str
+    visitor_retention_metadata: str
+    visitor_audio_enabled: bool
+    visitor_audio_device: Optional[int]
+    visitor_audio_sample_rate: int
+    visitor_audio_codec: str
+    visitor_ffmpeg_path: str
+    study_observer_enabled: bool
+    study_desk_region: Tuple[float, float, float, float]
+    study_bed_region: Tuple[float, float, float, float]
+    study_motion_threshold: float
+    study_min_confidence: float
+    study_slot_title_patterns: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -72,6 +100,48 @@ class Settings:
             daily_prompt_retry_minutes=int(
                 os.getenv("DAILY_PROMPT_RETRY_MINUTES", "15")
             ),
+            camera_presence_enabled=_optional_bool(os.getenv("CAMERA_PRESENCE_ENABLED")),
+            camera_index=int(os.getenv("CAMERA_INDEX", "0")),
+            camera_sample_interval_seconds=float(
+                os.getenv("CAMERA_SAMPLE_INTERVAL_SECONDS", "5")
+            ),
+            camera_quiet_start=_optional_time(os.getenv("CAMERA_QUIET_START")),
+            camera_quiet_end=_optional_time(os.getenv("CAMERA_QUIET_END")),
+            camera_min_consecutive_detections=int(
+                os.getenv("CAMERA_MIN_CONSECUTIVE_DETECTIONS", "2")
+            ),
+            camera_min_consecutive_absence=int(
+                os.getenv("CAMERA_MIN_CONSECUTIVE_ABSENCE", "3")
+            ),
+            owner_verification_enabled=_optional_bool(os.getenv("OWNER_VERIFICATION_ENABLED")),
+            owner_encoding_file=os.getenv("OWNER_ENCODING_FILE", ".edith-owner.json"),
+            owner_return_after_minutes=int(os.getenv("OWNER_RETURN_AFTER_MINUTES", "30")),
+            owner_face_tolerance=float(os.getenv("OWNER_FACE_TOLERANCE", "0.48")),
+            visitor_recording_enabled=_optional_bool(os.getenv("VISITOR_RECORDING_ENABLED")),
+            visitor_drive_collection=os.getenv("VISITOR_DRIVE_COLLECTION", "visitor-recordings"),
+            visitor_max_session_duration_seconds=float(os.getenv("VISITOR_MAX_SESSION_DURATION_SECONDS", "120")),
+            visitor_recording_announcement=os.getenv(
+                "VISITOR_RECORDING_ANNOUNCEMENT",
+                "This room is monitored. Recording has started.",
+            ),
+            visitor_retention_metadata=os.getenv(
+                "VISITOR_RETENTION_METADATA", "Delete visitor recordings when no longer needed."
+            ),
+            visitor_audio_enabled=_optional_bool(os.getenv("VISITOR_AUDIO_ENABLED")),
+            visitor_audio_device=_optional_int(os.getenv("VISITOR_AUDIO_DEVICE")),
+            visitor_audio_sample_rate=int(os.getenv("VISITOR_AUDIO_SAMPLE_RATE", "16000")),
+            visitor_audio_codec=os.getenv("VISITOR_AUDIO_CODEC", "aac"),
+            visitor_ffmpeg_path=os.getenv("VISITOR_FFMPEG_PATH", "ffmpeg"),
+            study_observer_enabled=_optional_bool(os.getenv("STUDY_OBSERVER_ENABLED")),
+            study_desk_region=_region(os.getenv("STUDY_DESK_REGION", "0,0.5,0.5,0.5")),
+            study_bed_region=_region(os.getenv("STUDY_BED_REGION", "0.5,0.5,0.5,0.5")),
+            study_motion_threshold=float(os.getenv("STUDY_MOTION_THRESHOLD", "0.08")),
+            study_min_confidence=float(os.getenv("STUDY_MIN_CONFIDENCE", "0.5")),
+            study_slot_title_patterns=tuple(
+                item.strip().lower() for item in os.getenv(
+                    "STUDY_SLOT_TITLE_PATTERNS", "study,studying,leetcode,revision"
+                ).split(",") if item.strip()
+            ),
         )
 
     def require_cloud_keys(self) -> None:
@@ -92,3 +162,17 @@ def _optional_bool(value: Optional[str]) -> bool:
     if not value:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _optional_time(value: Optional[str]) -> Optional[time]:
+    if not value:
+        return None
+    hour, minute = (int(part) for part in value.split(":", 1))
+    return time(hour, minute)
+
+
+def _region(value: str) -> Tuple[float, float, float, float]:
+    parts = tuple(float(part.strip()) for part in value.split(","))
+    if len(parts) != 4:
+        raise ValueError("study regions must be x,y,width,height")
+    return parts

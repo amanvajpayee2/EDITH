@@ -11,6 +11,10 @@ from .speaker import Speaker
 from .reminders import ReminderEngine, ReminderWorker
 from .storage import GoogleDriveStorage
 from .wakeword import WakeWordDetector, extract_wake_command
+from .presence import CameraPresenceWorker, PresenceState
+from .owner_verification import OwnerVerifier
+from .study_observer import StudyObserver
+from .visitor_recorder import VisitorRecorder
 
 
 def _console_text(value: str) -> str:
@@ -30,23 +34,108 @@ def run() -> None:
     chat = None
     reminder_engine = None
     reminder_worker = None
+    storage = None
     if not settings.wakeword_test_mode:
         storage = GoogleDriveStorage(
             settings.google_drive_credentials_file,
             settings.google_drive_token_file,
             settings.google_drive_folder,
         )
+    presence_events: Queue[str] = Queue()
+    presence_state = PresenceState(
+        settings.camera_presence_enabled,
+        presence_events.put,
+        require_owner=settings.owner_verification_enabled,
+    )
+    presence_state.set_return_after_seconds(settings.owner_return_after_minutes * 60)
+    presence_worker = None
+    visitor_recorder = None
+    if (
+        settings.visitor_recording_enabled
+        and storage is not None
+        and settings.owner_verification_enabled
+    ):
+        visitor_recorder = VisitorRecorder(
+            storage,
+            settings.visitor_drive_collection,
+            settings.visitor_max_session_duration_seconds,
+            settings.visitor_recording_announcement,
+            settings.visitor_retention_metadata,
+            lambda text: print(f"EDITH: {text}"),
+            audio_enabled=settings.visitor_audio_enabled,
+            audio_device=settings.visitor_audio_device,
+            audio_sample_rate=settings.visitor_audio_sample_rate,
+            audio_codec=settings.visitor_audio_codec,
+            ffmpeg_path=settings.visitor_ffmpeg_path,
+        )
+    elif settings.visitor_recording_enabled:
+        print(
+            "EDITH visitor recording disabled: owner verification must be enabled "
+            "to avoid recording the owner."
+        )
+    study_observer = (
+        StudyObserver(
+            settings.study_desk_region,
+            settings.study_bed_region,
+            settings.study_motion_threshold,
+            settings.study_min_confidence,
+        )
+        if settings.study_observer_enabled else None
+    )
+    if (
+        settings.camera_presence_enabled
+        or study_observer is not None
+        or visitor_recorder is not None
+    ):
+        owner_verifier = (
+            OwnerVerifier(settings.owner_encoding_file, settings.owner_face_tolerance)
+            if settings.owner_verification_enabled else None
+        )
+        if visitor_recorder is not None and (
+            owner_verifier is None or not owner_verifier.available
+        ):
+            print(
+                "EDITH visitor recording disabled: owner enrollment/backend is "
+                "unavailable."
+            )
+            visitor_recorder = None
+        presence_worker = CameraPresenceWorker(
+            presence_state,
+            settings.camera_index,
+            settings.camera_sample_interval_seconds,
+            settings.camera_quiet_start,
+            settings.camera_quiet_end,
+            settings.camera_min_consecutive_detections,
+            settings.camera_min_consecutive_absence,
+            owner_verifier,
+            study_observer=study_observer,
+            visitor_recorder=visitor_recorder,
+        )
+        if settings.camera_presence_enabled:
+            print("Camera presence is enabled (local HOG person detection only).")
+        if study_observer is not None:
+            print("Local study observation is enabled; only aggregate estimates are retained in memory.")
+        if owner_verifier is not None:
+            if owner_verifier.available:
+                print("Local owner verification is enabled; unrecognized people remain unknown.")
+            else:
+                print("Owner verification is degraded; enroll locally and install face-recognition to confirm identity.")
     playback = PlaybackGuard(settings.playback_cooldown_seconds)
     pending_notifications: Queue[str] = Queue()
+    deferred_notifications: list[str] = []
     speaker = None
     if not settings.wakeword_test_mode:
         speaker = Speaker(playback)
+        if visitor_recorder is not None:
+            visitor_recorder.speak = speaker.speak
         assert storage is not None
         reminder_engine = ReminderEngine(
             storage,
             settings.reminder_advance_minutes,
             clock_time(settings.daily_prompt_hour, settings.daily_prompt_minute),
             settings.daily_prompt_retry_minutes,
+            study_observer=study_observer,
+            study_slot_title_patterns=settings.study_slot_title_patterns,
         )
         chat = OpenRouterChat(
             settings.openrouter_api_key,
@@ -60,8 +149,11 @@ def run() -> None:
             reminder_engine,
             pending_notifications.put,
             settings.reminder_interval_seconds,
+            presence_state,
         )
         reminder_worker.start()
+    if presence_worker is not None:
+        presence_worker.start()
     follow_up_until = 0.0
     detector = None
 
@@ -81,15 +173,33 @@ def run() -> None:
         if playback.blocked:
             time.sleep(0.1)
             continue
+        if speaker is not None:
+            while True:
+                try:
+                    event = presence_events.get_nowait()
+                except Empty:
+                    break
+                if event == "owner_returned":
+                    greeting = "Welcome back, Aman."
+                    print(f"EDITH: {greeting}")
+                    speaker.speak(greeting)
+                    follow_up_until = time.monotonic() + settings.follow_up_seconds
         try:
             if time.monotonic() >= follow_up_until:
                 while True:
                     reminder = pending_notifications.get_nowait()
-                    print(f"EDITH reminder: {_console_text(reminder)}")
-                    speaker.speak(reminder)
-                    follow_up_until = time.monotonic() + settings.follow_up_seconds
+                    deferred_notifications.append(reminder)
         except Empty:
             pass
+        if not presence_state.should_defer and deferred_notifications:
+            for reminder in deferred_notifications:
+                print(f"EDITH reminder: {_console_text(reminder)}")
+                speaker.speak(reminder)
+                follow_up_until = time.monotonic() + settings.follow_up_seconds
+            deferred_notifications.clear()
+        if not presence_state.should_accept_commands:
+            time.sleep(0.1)
+            continue
         text = ""
         if time.monotonic() >= follow_up_until:
             if detector is not None:
@@ -153,8 +263,11 @@ def run() -> None:
             print(f"EDITH reminder check unavailable: {_console_text(str(error))}")
             pending_reminders = []
         for reminder in pending_reminders:
-            print(f"EDITH reminder: {_console_text(reminder)}")
-            speaker.speak(reminder)
+            if presence_state.should_defer:
+                deferred_notifications.append(reminder)
+            else:
+                print(f"EDITH reminder: {_console_text(reminder)}")
+                speaker.speak(reminder)
         checkin_answer = reminder_engine.consume_response(text)
         if checkin_answer is not None:
             chat.record_local_exchange(text, checkin_answer)
