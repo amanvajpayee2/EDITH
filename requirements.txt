@@ -4,7 +4,8 @@ numpy>=2.0.0
 python-dotenv>=1.0.1
 sounddevice>=0.5.0
 webrtcvad-wheels>=2.0.14
-openwakeword>=0.6.0
+# Optional local wake-word backend. Install from requirements-wakeword.txt
+# on a Python version with compatible scipy/onnxruntime wheels.
 pyttsx3>=2.90
 google-api-python-client>=2.150.0
 google-auth-httplib2>=0.2.0
