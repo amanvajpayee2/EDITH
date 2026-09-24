@@ -1,5 +1,6 @@
 import time
 import sys
+from datetime import timedelta
 from queue import Empty, Queue
 import httpx
 from datetime import datetime, time as clock_time
@@ -41,6 +42,16 @@ def run() -> None:
             settings.google_drive_token_file,
             settings.google_drive_folder,
         )
+        if settings.visitor_recording_enabled and settings.visitor_retention_days > 0:
+            try:
+                deleted = storage.purge_files_older_than(
+                    settings.visitor_drive_collection,
+                    timedelta(days=settings.visitor_retention_days),
+                )
+                if deleted:
+                    print(f"EDITH removed {deleted} expired visitor recording(s) from Drive.")
+            except (OSError, RuntimeError) as error:
+                print(f"EDITH visitor retention cleanup unavailable: {error}")
     presence_events: Queue[str] = Queue()
     presence_state = PresenceState(
         settings.camera_presence_enabled,
@@ -183,6 +194,10 @@ def run() -> None:
                     greeting = "Welcome back, Aman."
                     print(f"EDITH: {greeting}")
                     speaker.speak(greeting)
+                    return_prompt = reminder_engine.begin_return_session()
+                    if return_prompt:
+                        print(f"EDITH: {_console_text(return_prompt)}")
+                        speaker.speak(return_prompt)
                     follow_up_until = time.monotonic() + settings.follow_up_seconds
         try:
             if time.monotonic() >= follow_up_until:
