@@ -125,6 +125,14 @@ class ReminderEngine:
 
     def consume_response(self, text: str) -> str | None:
         current = datetime.now().astimezone()
+        return_session = self.storage.read_json("metadata", "return-session.json", {})
+        if (
+            return_session.get("date") == current.date().isoformat()
+            and return_session.get("queue")
+        ):
+            response = self._consume_return_response(text, current, return_session)
+            if response is not None:
+                return response
         plan = self.planner.get(current.date())
         active = self.storage.read_json("metadata", "active-checkin.json", {})
         if (
@@ -172,6 +180,121 @@ class ReminderEngine:
                 self.planner.save(plan)
                 return "What prevented you from completing it?"
         return None
+
+    def begin_return_session(self, now: datetime | None = None) -> str | None:
+            """Create (or resume) the durable review of work missed while away."""
+            current = now or datetime.now().astimezone()
+            stored = self.storage.read_json("metadata", "return-session.json", {})
+            if stored.get("date") == current.date().isoformat() and stored.get("queue"):
+                return self._return_prompt(stored)
+            plan = self.planner.get(current.date())
+            queue = []
+            for item_type, items, due_key in (
+                ("slot", plan.get("slots", []), "end"),
+                ("goal", plan.get("goals", []), "due_at"),
+            ):
+                for item in items:
+                    if item.get("status") in {"completed", "skipped"}:
+                        continue
+                    due = item.get(due_key)
+                    if not due or datetime.fromisoformat(due) > current:
+                        continue
+                    queue.append({"item_id": item["id"], "item_type": item_type})
+            if not queue:
+                self.storage.write_json("metadata", "return-session.json", {})
+                return None
+            session = {
+                "date": current.date().isoformat(),
+                "queue": queue,
+                "index": 0,
+                "awaiting_reason": False,
+                "awaiting_reschedule": False,
+                "started_at": current.isoformat(),
+            }
+            self.storage.write_json("metadata", "return-session.json", session)
+            return self._return_prompt(session)
+
+    def _consume_return_response(
+            self, text: str, current: datetime, session: dict
+    ) -> str | None:
+            index = int(session.get("index", 0))
+            queue = session.get("queue", [])
+            if index >= len(queue):
+                self.storage.write_json("metadata", "return-session.json", {})
+                return None
+            plan_date = date.fromisoformat(session["date"])
+            plan = self.planner.get(plan_date)
+            entry = queue[index]
+            items = [*plan.get("slots", []), *plan.get("goals", [])]
+            item = next((value for value in items if value.get("id") == entry["item_id"]), None)
+            if item is None:
+                return self._advance_return_session(session, plan, current)
+            events = item.setdefault("reminders", {})
+            if session.get("awaiting_reason"):
+                reason = text.strip()
+                if not reason:
+                    return "Please tell me briefly what prevented you from completing it."
+                item["status"] = "missed"
+                item["missed_reason"] = reason
+                session["awaiting_reason"] = False
+                if entry["item_type"] == "slot":
+                    session["awaiting_reschedule"] = True
+                    self.planner.save(plan)
+                    self.storage.write_json("metadata", "return-session.json", session)
+                    return "Would you like to reschedule this task later today or tomorrow?"
+                self.planner.save(plan)
+                return self._advance_return_session(session, plan, current)
+            if session.get("awaiting_reschedule"):
+                day = _reschedule_day(text)
+                if day is None:
+                    return "Say later today, tomorrow, or no to leave it missed."
+                session["awaiting_reschedule"] = False
+                if day is not False:
+                    self._reschedule_slot(item, current, day)
+                    self.planner.save(plan)
+                    return self._advance_return_session(
+                        session, plan, current, f"Okay, I rescheduled it for {day.strftime('%A')}."
+                    )
+                self.planner.save(plan)
+                return self._advance_return_session(session, plan, current, "Okay, I left it missed.")
+            if _is_positive(text):
+                item["status"] = "completed"
+                item["completion_note"] = text.strip()
+                self.planner.save(plan)
+                return self._advance_return_session(session, plan, current)
+            if _is_negative(text):
+                session["awaiting_reason"] = True
+                self.storage.write_json("metadata", "return-session.json", session)
+                return "What prevented you from completing it?"
+            return "Please answer yes or no. Did you complete this task?"
+
+    def _advance_return_session(
+        self, session: dict, plan: dict, current: datetime, prefix: str = ""
+    ) -> str:
+        session["index"] = int(session.get("index", 0)) + 1
+        session["awaiting_reason"] = False
+        session["awaiting_reschedule"] = False
+        if session["index"] >= len(session.get("queue", [])):
+            self.storage.write_json("metadata", "return-session.json", {})
+            return (prefix + " All missed-task check-ins are complete.").strip()
+        self.storage.write_json("metadata", "return-session.json", session)
+        next_prompt = self._return_prompt(session)
+        return f"{prefix} {next_prompt}".strip() if prefix else next_prompt
+
+    def _return_prompt(self, session: dict) -> str:
+        queue = session.get("queue", [])
+        index = int(session.get("index", 0))
+        if index >= len(queue):
+            return "All missed-task check-ins are complete."
+        plan = self.planner.get(date.fromisoformat(session["date"]))
+        item_id = queue[index]["item_id"]
+        item = next(
+            (value for value in [*plan.get("slots", []), *plan.get("goals", [])]
+             if value.get("id") == item_id),
+            None,
+        )
+        title = (item or {}).get("title") or (item or {}).get("text") or "that task"
+        return f"While you were away, did you complete {title}?"
 
     def _is_study_slot(self, slot: dict) -> bool:
         if bool(slot.get("study", slot.get("is_study", False))):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import threading
 from typing import Any
@@ -172,6 +172,23 @@ class GoogleDriveStorage:
     # Kept as a descriptive alias for callers handling uploaded media.
     def delete_binary(self, file_id: str) -> None:
         self.delete_file(file_id)
+
+    def purge_files_older_than(self, collection: str, age: timedelta) -> int:
+        """Delete files in a Drive collection older than ``age``."""
+        cutoff = (datetime.now(timezone.utc) - age).isoformat().replace("+00:00", "Z")
+        with self._lock:
+            folder_id = self._folder_id(collection, self._folder_id(self.folder_name))
+            result = self._api().files().list(
+                q=f"'{folder_id}' in parents and trashed = false and createdTime < '{cutoff}'",
+                spaces="drive",
+                fields="files(id)",
+                pageSize=100,
+            ).execute()
+            deleted = 0
+            for item in result.get("files", []):
+                self._api().files().delete(fileId=item["id"]).execute()
+                deleted += 1
+            return deleted
 
     def list_json(self, collection: str) -> list[tuple[str, Any]]:
         with self._lock:

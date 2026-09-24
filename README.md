@@ -165,6 +165,43 @@ credential, save its downloaded JSON as `credentials.json` (or configure
 `GOOGLE_DRIVE_CREDENTIALS_FILE`), and run EDITH. The first run opens a browser
 for consent; only the OAuth token cache is local, while user data remains in
 Drive. The Drive API dependencies are listed in `requirements.txt`.
+
+## Raspberry Pi deployment checklist
+
+1. Clone the repository and create a virtual environment:
+
+   ```bash
+   python3 -m venv .venv
+   . .venv/bin/activate
+   python -m pip install -r requirements.txt
+   ```
+
+2. Install system packages required by the optional features:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y ffmpeg libgl1 libglib2.0-0 portaudio19-dev
+   ```
+
+3. Copy `.env.example` to `.env`, set the external webcam `CAMERA_INDEX`,
+   configure quiet hours, and keep visitor recording disabled until owner
+   enrollment has been tested.
+
+4. Put the Google OAuth desktop credentials at the configured path and run:
+
+   ```bash
+   python -m edith.app
+   ```
+
+5. Test camera enumeration, owner enrollment, microphone access, and FFmpeg
+   separately before enabling visitor audio. The first run opens a browser for
+   Drive consent; complete that on a machine with access to the Pi's OAuth
+   callback.
+
+The Pi-specific camera index, codec support, microphone contention, lighting,
+and face-recognition accuracy cannot be validated from this development
+machine. Enable one feature at a time and inspect EDITH's explicit degraded
+messages before combining them.
 ### Visitor recording (explicit opt-in)
 
 Visitor recording is disabled by default. Set `VISITOR_RECORDING_ENABLED=true` only
@@ -176,7 +213,9 @@ operating system temporary directory, and uploads it to the configured
 `VISITOR_DRIVE_COLLECTION`. The temporary file is deleted after both successful and
 failed uploads; there is no local or silent cloud fallback. Owner-confirmed sessions
 are never recorded. `VISITOR_MAX_SESSION_DURATION_SECONDS`, announcement text, and
-retention metadata are configurable.
+retention metadata are configurable. At startup, recordings older than
+`VISITOR_RETENTION_DAYS` (default 30 days) are deleted from the configured
+Drive collection. Set it to `0` to disable automatic cleanup.
 
 By default recordings remain video-only. Set `VISITOR_AUDIO_ENABLED=true` to open
 a separate `sounddevice` microphone stream only for the visitor recording
