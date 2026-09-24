@@ -174,8 +174,12 @@ def run() -> None:
         try:
             detector = WakeWordDetector(settings.wakeword_engine, settings.wakeword_model_path, settings.wakeword_threshold)
             print("EDITH is listening locally for the wake word.")
-        except FileNotFoundError:
-            print('Wake model missing. Falling back to spoken command mode ("HEY ...").')
+        except (FileNotFoundError, ImportError, OSError) as error:
+            print(
+                "Local wake-word backend unavailable "
+                f"({_console_text(str(error))}). Falling back to spoken command mode "
+                '("HEY ...").'
+            )
     else:
         detector = WakeWordDetector(settings.wakeword_engine, settings.wakeword_model_path, settings.wakeword_threshold)
         print("EDITH is listening locally for the wake word.")

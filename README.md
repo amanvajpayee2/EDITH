@@ -151,6 +151,29 @@ The assistant is being built in vertical slices:
    `EDITH/reports/`.
 5. **Dashboard:** a later UI will read the same Drive-backed records.
 
+### Raspberry Pi dependency note
+
+`openwakeword` is optional because its `scipy` and `onnxruntime` dependencies
+do not have compatible wheels for every Raspberry Pi Python version and package
+index. The core install intentionally excludes it. To deploy first with voice,
+set:
+
+```env
+WAKEWORD_ENGINE=spoken
+```
+
+In spoken fallback mode, say `HEY` followed by the command. EDITH still uses
+the local microphone and sends only the resulting utterance for transcription.
+If you want the local openWakeWord backend, use a supported 64-bit Python
+version (typically Python 3.11 or 3.12 on Raspberry Pi OS) and install:
+
+```bash
+python -m pip install -r requirements-wakeword.txt
+```
+
+If that optional install fails, keep `WAKEWORD_ENGINE=spoken`; EDITH now
+reports the unavailable backend and falls back instead of exiting.
+
 EDITH must be running for real-time microphone reminders and speech. At the
 configured daily prompt time (default **7:00 AM**), it asks for that day's
 goals and time slots. If you miss it, the prompt is persisted in Drive and
