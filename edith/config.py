@@ -50,6 +50,7 @@ class Settings:
     visitor_max_session_duration_seconds: float
     visitor_recording_announcement: str
     visitor_retention_metadata: str
+    visitor_retention_days: int
     visitor_audio_enabled: bool
     visitor_audio_device: Optional[int]
     visitor_audio_sample_rate: int
@@ -127,6 +128,7 @@ class Settings:
             visitor_retention_metadata=os.getenv(
                 "VISITOR_RETENTION_METADATA", "Delete visitor recordings when no longer needed."
             ),
+            visitor_retention_days=int(os.getenv("VISITOR_RETENTION_DAYS", "30")),
             visitor_audio_enabled=_optional_bool(os.getenv("VISITOR_AUDIO_ENABLED")),
             visitor_audio_device=_optional_int(os.getenv("VISITOR_AUDIO_DEVICE")),
             visitor_audio_sample_rate=int(os.getenv("VISITOR_AUDIO_SAMPLE_RATE", "16000")),

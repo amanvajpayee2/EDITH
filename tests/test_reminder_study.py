@@ -74,6 +74,38 @@ class StudyReminderTests(unittest.TestCase):
             self.start.date() + timedelta(days=1),
         )
 
+    def test_owner_return_reviews_multiple_tasks_with_durable_queue(self):
+        now = datetime.now().astimezone().replace(second=0, microsecond=0)
+        plan = {
+            "date": now.date().isoformat(),
+            "goals": [{
+                "id": "goal-1", "text": "Send report",
+                "due_at": (now - timedelta(minutes=30)).isoformat(),
+                "status": "planned",
+            }],
+            "slots": [{
+                "id": "study-1", "title": "Study biology",
+                "start": (now - timedelta(hours=2)).isoformat(),
+                "end": (now - timedelta(hours=1)).isoformat(),
+                "status": "planned",
+            }],
+        }
+        storage = MemoryStorage(plan)
+        engine = ReminderEngine(storage, study_slot_title_patterns=("study",))
+
+        self.assertIn("Study biology", engine.begin_return_session(now))
+        self.assertEqual(len(storage.data["metadata"]["return-session.json"]["queue"]), 2)
+        self.assertIn("What prevented", engine.consume_response("no"))
+        self.assertIn("reschedule", engine.consume_response("I was traveling"))
+        next_prompt = engine.consume_response("tomorrow")
+        self.assertIn("Send report", next_prompt)
+        self.assertIn("complete", engine.consume_response("yes").lower())
+        self.assertEqual(storage.data["metadata"]["return-session.json"], {})
+        self.assertEqual(
+            datetime.fromisoformat(storage.data["plans"][plan["date"] + ".json"]["slots"][0]["start"]).date(),
+            now.date() + timedelta(days=1),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
