@@ -163,6 +163,13 @@ class CameraPresenceWorker:
     def _run(self) -> None:
         try:
             cv2 = self._cv2 or _import_cv2()
+            if not hasattr(cv2, "HOGDescriptor") or not hasattr(
+                cv2, "HOGDescriptor_getDefaultPeopleDetector"
+            ):
+                raise RuntimeError(
+                    "OpenCV 4.x with HOGDescriptor is required; "
+                    f"installed version is {getattr(cv2, '__version__', 'unknown')}"
+                )
             detector = cv2.HOGDescriptor()
             detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         except (ImportError, OSError, RuntimeError, ValueError, AttributeError) as error:

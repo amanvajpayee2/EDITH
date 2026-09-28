@@ -199,6 +199,11 @@ python -m pip install -r requirements-wakeword.txt
 If that optional install fails, keep `WAKEWORD_ENGINE=spoken`; EDITH now
 reports the unavailable backend and falls back instead of exiting.
 
+The camera presence detector currently requires OpenCV 4.x because OpenCV 5
+removed the `HOGDescriptor` API used by EDITH's local person detector. Keep
+the `<5` constraint in `requirements.txt`; do not upgrade this dependency to
+OpenCV 5 until the detector is migrated.
+
 EDITH must be running for real-time microphone reminders and speech. At the
 configured daily prompt time (default **7:00 AM**), it asks for that day's
 goals and time slots. If you miss it, the prompt is persisted in Drive and
