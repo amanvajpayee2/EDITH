@@ -133,6 +133,8 @@ class CameraPresenceWorker:
         study_observer: StudyObserver | None = None,
         visitor_recorder: VisitorRecorder | None = None,
         clock: Callable[[], datetime] | None = None,
+        debug_enabled: bool = False,
+        preview_enabled: bool = False,
     ) -> None:
         self.state = state
         self.camera_index = camera_index
@@ -146,6 +148,8 @@ class CameraPresenceWorker:
         self.study_observer = study_observer
         self.visitor_recorder = visitor_recorder
         self._clock = clock or (lambda: datetime.now().astimezone())
+        self.debug_enabled = debug_enabled
+        self.preview_enabled = preview_enabled
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="edith-camera", daemon=True)
 
@@ -181,6 +185,7 @@ class CameraPresenceWorker:
                         if self.visitor_recorder is not None:
                             self.visitor_recorder.stop("camera quiet hours")
                     self.state.set_quiet()
+                    self._debug("camera quiet hours; webcam released")
                     present_count = absent_count = 0
                     if self._stop.wait(self.interval_seconds):
                         break
@@ -195,6 +200,7 @@ class CameraPresenceWorker:
                             if self._stop.wait(self.interval_seconds):
                                 break
                             continue
+                        self._debug(f"camera opened: index={self.camera_index}")
                     except (OSError, RuntimeError, ValueError, AttributeError) as error:
                         self._degrade(f"camera could not be opened: {error}")
                         if self._stop.wait(self.interval_seconds):
@@ -209,6 +215,23 @@ class CameraPresenceWorker:
                         continue
                     boxes, _ = detector.detectMultiScale(frame)
                     detected = len(boxes) > 0
+                    identity = None
+                    if detected and self.owner_verifier is not None:
+                        try:
+                            identity = (
+                                "owner"
+                                if self.owner_verifier.verify(frame) is True
+                                else "unknown"
+                            )
+                        except (OSError, RuntimeError, ValueError, AttributeError) as error:
+                            identity = "unknown"
+                            self._degrade(f"owner verification failed: {error}")
+                    self._debug(
+                        f"frame: person={'yes' if detected else 'no'} "
+                        f"boxes={len(boxes)} identity={identity or 'not-checked'}"
+                    )
+                    if self.preview_enabled:
+                        self._show_preview(cv2, frame, boxes, detected, identity)
                     if self.study_observer is not None and self.study_observer.active:
                         self.study_observer.observe(
                             frame, boxes, person_present=detected
@@ -216,13 +239,6 @@ class CameraPresenceWorker:
                     present_count = present_count + 1 if detected else 0
                     absent_count = absent_count + 1 if not detected else 0
                     if present_count >= self.min_detections:
-                        identity = None
-                        if self.owner_verifier is not None:
-                            try:
-                                identity = "owner" if self.owner_verifier.verify(frame) is True else "unknown"
-                            except (OSError, RuntimeError, ValueError, AttributeError) as error:
-                                identity = "unknown"
-                                self._degrade(f"owner verification failed: {error}")
                         self.state.update(True, identity=identity)
                         if self.visitor_recorder is not None:
                             self.visitor_recorder.process(frame, True, identity)
@@ -248,6 +264,30 @@ class CameraPresenceWorker:
     def _degrade(self, reason: str) -> None:
         self.state.degrade(reason)
         print(f"EDITH camera presence degraded: {reason}")
+
+    def _debug(self, message: str) -> None:
+        if self.debug_enabled:
+            print(f"EDITH camera debug: {message}")
+
+    def _show_preview(self, cv2: Any, frame: Any, boxes: Any, detected: bool, identity: str | None) -> None:
+        try:
+            annotated = frame.copy()
+            for box in boxes:
+                x, y, width, height = (int(value) for value in box[:4])
+                cv2.rectangle(annotated, (x, y), (x + width, y + height), (0, 255, 0), 2)
+            label = f"person={'yes' if detected else 'no'} identity={identity or 'not-checked'}"
+            cv2.putText(
+                annotated, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 255, 255), 2,
+            )
+            cv2.imshow("EDITH camera preview (Q to close)", annotated)
+            if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q")):
+                self.preview_enabled = False
+                cv2.destroyWindow("EDITH camera preview (Q to close)")
+                self._debug("camera preview closed by user")
+        except (OSError, RuntimeError, ValueError, AttributeError) as error:
+            self.preview_enabled = False
+            self._debug(f"camera preview unavailable: {error}")
 
 
 def _import_cv2() -> Any:
