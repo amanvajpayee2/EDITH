@@ -121,6 +121,8 @@ def run() -> None:
             owner_verifier,
             study_observer=study_observer,
             visitor_recorder=visitor_recorder,
+            debug_enabled=settings.camera_debug_enabled,
+            preview_enabled=settings.camera_preview_enabled,
         )
         if settings.camera_presence_enabled:
             print("Camera presence is enabled (local HOG person detection only).")

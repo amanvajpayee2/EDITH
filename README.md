@@ -55,6 +55,31 @@ index. Start with `0`, then try `1`, `2`, and so on if the default device is
 not the external webcam. The camera must be visible to the operating system
 and available to only one application at a time.
 
+For first-camera troubleshooting, set:
+
+```env
+CAMERA_PRESENCE_ENABLED=1
+CAMERA_DEBUG_ENABLED=1
+CAMERA_PREVIEW_ENABLED=1
+```
+
+`CAMERA_DEBUG_ENABLED` prints camera open/release, frame, person-box, and
+identity status locally. `CAMERA_PREVIEW_ENABLED` opens an OpenCV window with
+person boxes and labels such as `identity=owner` or `identity=unknown`; press
+`Q` in that window to close the preview. Preview requires a graphical desktop
+session and the GUI OpenCV package. The default `opencv-python-headless`
+package cannot display windows. On a Pi desktop, replace it with:
+
+```bash
+python -m pip uninstall -y opencv-python-headless
+python -m pip install opencv-python
+```
+
+Over SSH or on a headless Pi, use debug logs instead. EDITH does not upload or
+persist preview frames. Without `OWNER_VERIFICATION_ENABLED=1` and a valid
+`.edith-owner.json`, the preview intentionally shows
+`identity=not-checked`, not `owner`.
+
 While a person is not detected, reminder speech is held and flushed when
 occupancy returns. During quiet hours presence is explicitly unavailable:
 owner-gated commands remain fail-closed, while ordinary reminders retain

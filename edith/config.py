@@ -41,6 +41,8 @@ class Settings:
     camera_quiet_end: Optional[time]
     camera_min_consecutive_detections: int
     camera_min_consecutive_absence: int
+    camera_debug_enabled: bool
+    camera_preview_enabled: bool
     owner_verification_enabled: bool
     owner_encoding_file: str
     owner_return_after_minutes: int
@@ -114,6 +116,8 @@ class Settings:
             camera_min_consecutive_absence=int(
                 os.getenv("CAMERA_MIN_CONSECUTIVE_ABSENCE", "3")
             ),
+            camera_debug_enabled=_optional_bool(os.getenv("CAMERA_DEBUG_ENABLED")),
+            camera_preview_enabled=_optional_bool(os.getenv("CAMERA_PREVIEW_ENABLED")),
             owner_verification_enabled=_optional_bool(os.getenv("OWNER_VERIFICATION_ENABLED")),
             owner_encoding_file=os.getenv("OWNER_ENCODING_FILE", ".edith-owner.json"),
             owner_return_after_minutes=int(os.getenv("OWNER_RETURN_AFTER_MINUTES", "30")),
