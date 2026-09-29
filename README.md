@@ -37,9 +37,15 @@ python -m edith.app
 ## Phase 1 camera presence (optional)
 
 Install `opencv-python-headless` from `requirements.txt` and set
-`CAMERA_PRESENCE_ENABLED=1` in `.env`. EDITH samples the configured
-`CAMERA_INDEX` at `CAMERA_SAMPLE_INTERVAL_SECONDS` and uses OpenCV's built-in
-HOG person detector. `CAMERA_MIN_CONSECUTIVE_DETECTIONS` and
+`CAMERA_PRESENCE_ENABLED=1` in `.env`. For reliable room-view detection,
+install the optional modern detector with `python -m pip install -r
+requirements-vision.txt`; the first YOLO start downloads the configured model.
+Set `CAMERA_DETECTOR=yolo` to require it, or leave `auto` to use YOLO when
+available and HOG only as an explicit compatibility fallback. YOLO is
+restricted to the `person` class and uses `CAMERA_DETECTION_CONFIDENCE`,
+`CAMERA_DETECTION_IOU`, and `CAMERA_DETECTION_IMAGE_SIZE`. EDITH samples the
+configured `CAMERA_INDEX` at `CAMERA_SAMPLE_INTERVAL_SECONDS`.
+`CAMERA_MIN_CONSECUTIVE_DETECTIONS` and
 `CAMERA_MIN_CONSECUTIVE_ABSENCE` prevent one noisy frame from changing the
 state. Optional `CAMERA_QUIET_START` and `CAMERA_QUIET_END` values use local
 24-hour `HH:MM` time. During that interval EDITH releases the webcam
@@ -199,10 +205,12 @@ python -m pip install -r requirements-wakeword.txt
 If that optional install fails, keep `WAKEWORD_ENGINE=spoken`; EDITH now
 reports the unavailable backend and falls back instead of exiting.
 
-The camera presence detector currently requires OpenCV 4.x because OpenCV 5
-removed the `HOGDescriptor` API used by EDITH's local person detector. Keep
-the `<5` constraint in `requirements.txt`; do not upgrade this dependency to
-OpenCV 5 until the detector is migrated.
+The recommended detector is YOLO because the former HOG detector is intended
+for upright pedestrians and performs poorly on seated, distant, or partially
+occluded people in a room. HOG remains only as a fallback and should not be
+used for study or owner-gated workflows when YOLO is unavailable. Detection is
+still probabilistic; no camera model can guarantee perfect results in poor
+lighting, severe occlusion, or an unsuitable camera angle.
 
 EDITH must be running for real-time microphone reminders and speech. At the
 configured daily prompt time (default **7:00 AM**), it asks for that day's
