@@ -41,6 +41,12 @@ class Settings:
     camera_quiet_end: Optional[time]
     camera_min_consecutive_detections: int
     camera_min_consecutive_absence: int
+    camera_detector: str
+    camera_model_path: str
+    camera_detection_confidence: float
+    camera_detection_iou: float
+    camera_detection_image_size: int
+    camera_hog_score_threshold: float
     camera_debug_enabled: bool
     camera_preview_enabled: bool
     owner_verification_enabled: bool
@@ -115,6 +121,18 @@ class Settings:
             ),
             camera_min_consecutive_absence=int(
                 os.getenv("CAMERA_MIN_CONSECUTIVE_ABSENCE", "3")
+            ),
+            camera_detector=os.getenv("CAMERA_DETECTOR", "auto").strip().lower(),
+            camera_model_path=os.getenv("CAMERA_MODEL_PATH", "yolo11n.pt"),
+            camera_detection_confidence=float(
+                os.getenv("CAMERA_DETECTION_CONFIDENCE", "0.35")
+            ),
+            camera_detection_iou=float(os.getenv("CAMERA_DETECTION_IOU", "0.45")),
+            camera_detection_image_size=int(
+                os.getenv("CAMERA_DETECTION_IMAGE_SIZE", "640")
+            ),
+            camera_hog_score_threshold=float(
+                os.getenv("CAMERA_HOG_SCORE_THRESHOLD", "0.4")
             ),
             camera_debug_enabled=_optional_bool(os.getenv("CAMERA_DEBUG_ENABLED")),
             camera_preview_enabled=_optional_bool(os.getenv("CAMERA_PREVIEW_ENABLED")),
