@@ -131,7 +131,10 @@ def run() -> None:
             preview_enabled=settings.camera_preview_enabled,
         )
         if settings.camera_presence_enabled:
-            print("Camera presence is enabled (local HOG person detection only).")
+            print(
+                "Camera presence is enabled "
+                f"(detector={settings.camera_detector})."
+            )
         if study_observer is not None:
             print("Local study observation is enabled; only aggregate estimates are retained in memory.")
         if owner_verifier is not None:
