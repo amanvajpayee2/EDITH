@@ -116,7 +116,7 @@ class PresenceState:
 
 
 class CameraPresenceWorker:
-    """Samples a webcam and uses OpenCV's built-in HOG person detector."""
+    """Samples a webcam with a modern person detector and safe fallback."""
 
     def __init__(
         self,
@@ -127,6 +127,12 @@ class CameraPresenceWorker:
         quiet_end: time | None = None,
         min_consecutive_detections: int = 2,
         min_consecutive_absence: int = 3,
+        detector_backend: str = "hog",
+        model_path: str = "models/yolo11n.pt",
+        detection_confidence: float = 0.35,
+        detection_iou: float = 0.45,
+        detection_image_size: int = 640,
+        hog_score_threshold: float = 0.4,
         owner_verifier: OwnerVerifier | None = None,
         cv2_module: Any | None = None,
         capture_factory: Callable[[int], Any] | None = None,
@@ -142,6 +148,12 @@ class CameraPresenceWorker:
         self.quiet_start, self.quiet_end = quiet_start, quiet_end
         self.min_detections = max(1, min_consecutive_detections)
         self.min_absence = max(1, min_consecutive_absence)
+        self.hog_score_threshold = hog_score_threshold
+        self.detector_backend = detector_backend
+        self.model_path = model_path
+        self.detection_confidence = min(max(detection_confidence, 0.05), 0.99)
+        self.detection_iou = min(max(detection_iou, 0.05), 0.95)
+        self.detection_image_size = max(320, detection_image_size)
         self.owner_verifier = owner_verifier
         self._cv2 = cv2_module
         self._capture_factory = capture_factory
@@ -163,15 +175,16 @@ class CameraPresenceWorker:
     def _run(self) -> None:
         try:
             cv2 = self._cv2 or _import_cv2()
-            if not hasattr(cv2, "HOGDescriptor") or not hasattr(
-                cv2, "HOGDescriptor_getDefaultPeopleDetector"
-            ):
-                raise RuntimeError(
-                    "OpenCV 4.x with HOGDescriptor is required; "
-                    f"installed version is {getattr(cv2, '__version__', 'unknown')}"
-                )
-            detector = cv2.HOGDescriptor()
-            detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            detector_name, detector = _create_person_detector(
+                cv2,
+                self.detector_backend,
+                self.model_path,
+                self.detection_confidence,
+                self.detection_iou,
+                self.detection_image_size,
+                self.hog_score_threshold,
+            )
+            self._debug(f"detector ready: {detector_name}")
         except (ImportError, OSError, RuntimeError, ValueError, AttributeError) as error:
             self._degrade(f"OpenCV unavailable: {error}")
             return
@@ -220,7 +233,7 @@ class CameraPresenceWorker:
                     if not ok:
                         self._degrade("camera frame unavailable")
                         continue
-                    boxes, _ = detector.detectMultiScale(frame)
+                    boxes, scores = detector(frame)
                     detected = len(boxes) > 0
                     identity = None
                     if detected and self.owner_verifier is not None:
@@ -235,7 +248,8 @@ class CameraPresenceWorker:
                             self._degrade(f"owner verification failed: {error}")
                     self._debug(
                         f"frame: person={'yes' if detected else 'no'} "
-                        f"boxes={len(boxes)} identity={identity or 'not-checked'}"
+                        f"boxes={len(boxes)} identity={identity or 'not-checked'} "
+                        f"scores={','.join(f'{score:.2f}' for score in scores)}"
                     )
                     if self.preview_enabled:
                         self._show_preview(cv2, frame, boxes, detected, identity)
@@ -301,6 +315,124 @@ def _import_cv2() -> Any:
     import cv2
 
     return cv2
+
+
+def _create_person_detector(
+    cv2: Any,
+    backend: str,
+    model_path: str,
+    confidence: float,
+    iou: float,
+    image_size: int,
+    hog_threshold: float,
+) -> tuple[str, Callable[[Any], tuple[list[Any], list[float]]]]:
+    requested = backend if backend in {"auto", "yolo", "hog"} else "auto"
+    if requested in {"auto", "yolo"}:
+        try:
+            from ultralytics import YOLO
+
+            model = YOLO(model_path)
+
+            def detect(frame: Any) -> tuple[list[Any], list[float]]:
+                results = model(
+                    frame,
+                    classes=[0],
+                    conf=confidence,
+                    iou=iou,
+                    imgsz=image_size,
+                    verbose=False,
+                )
+                if not results or results[0].boxes is None:
+                    return [], []
+                result = results[0]
+                boxes = result.boxes.xyxy.cpu().numpy()
+                scores = result.boxes.conf.cpu().numpy()
+                converted = [
+                    (float(box[0]), float(box[1]), float(box[2] - box[0]), float(box[3] - box[1]))
+                    for box in boxes
+                ]
+                return converted, [float(score) for score in scores]
+
+            return "yolo", detect
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            if requested == "yolo":
+                raise RuntimeError(
+                    "YOLO detector unavailable. Install requirements-vision.txt and "
+                    f"provide CAMERA_MODEL_PATH ({error})"
+                ) from error
+            print(f"EDITH camera: YOLO unavailable; using HOG fallback: {error}")
+
+    if not hasattr(cv2, "HOGDescriptor") or not hasattr(
+        cv2, "HOGDescriptor_getDefaultPeopleDetector"
+    ):
+        raise RuntimeError(
+            "No person detector available. Install requirements-vision.txt for YOLO."
+        )
+    detector = cv2.HOGDescriptor()
+    detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
+    def detect_hog(frame: Any) -> tuple[list[Any], list[float]]:
+        try:
+            boxes, weights = detector.detectMultiScale(
+                frame, winStride=(8, 8), padding=(16, 16), scale=1.05
+            )
+        except TypeError:
+            boxes, weights = detector.detectMultiScale(frame)
+        filtered = _filter_hog_detections(cv2, boxes, weights, hog_threshold)
+        scores = []
+        for box in filtered:
+            for original, weight in zip(
+                boxes if boxes is not None else [],
+                weights if weights is not None else [],
+            ):
+                if tuple(original) == tuple(box):
+                    scores.append(float(weight))
+                    break
+        return list(filtered), scores
+
+    return "hog", detect_hog
+
+
+def _filter_hog_detections(
+    cv2: Any,
+    boxes: Any,
+    weights: Any,
+    score_threshold: float,
+) -> list[Any]:
+    """Keep confident, non-overlapping HOG detections.
+
+    OpenCV's default pedestrian SVM can produce weak boxes around furniture
+    and doorways. The raw confidence scores and NMS are needed before a box
+    is allowed to affect room presence state.
+    """
+    candidates = []
+    for index, box in enumerate(boxes if boxes is not None else []):
+        try:
+            score = float(weights[index]) if weights is not None else 0.0
+        except (IndexError, TypeError, ValueError):
+            score = 0.0
+        if score >= score_threshold:
+            candidates.append((box, score))
+    if len(candidates) < 2:
+        return [box for box, _ in candidates]
+
+    candidate_boxes = [tuple(int(value) for value in box[:4]) for box, _ in candidates]
+    candidate_scores = [score for _, score in candidates]
+    try:
+        selected = cv2.dnn.NMSBoxes(
+            candidate_boxes,
+            candidate_scores,
+            score_threshold,
+            0.35,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return [box for box, _ in candidates]
+    selected_indices = {
+        int(item[0] if hasattr(item, "__len__") else item) for item in selected
+    }
+    return [
+        box for index, (box, _) in enumerate(candidates) if index in selected_indices
+    ]
 
 
 def _in_quiet_hours(start: time | None, end: time | None, now: time | None = None) -> bool:

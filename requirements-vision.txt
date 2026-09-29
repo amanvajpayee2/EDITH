@@ -1,0 +1,4 @@
+# Recommended modern person detector for room-view cameras.
+# This is separate from core requirements because it installs a larger ML
+# runtime and downloads the YOLO model on first use.
+ultralytics>=8.3.0,<9
