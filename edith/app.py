@@ -118,7 +118,7 @@ def run() -> None:
             settings.camera_quiet_end,
             settings.camera_min_consecutive_detections,
             settings.camera_min_consecutive_absence,
-            owner_verifier,
+            owner_verifier=owner_verifier,
             detector_backend=settings.camera_detector,
             model_path=settings.camera_model_path,
             detection_confidence=settings.camera_detection_confidence,
