@@ -4,4 +4,5 @@ credentials.json
 .edith-drive-token.json
 __pycache__/
 *.pyc
+yolo*.pt
 .edith-utterance.wav
