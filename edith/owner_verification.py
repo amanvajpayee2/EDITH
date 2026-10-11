@@ -125,7 +125,8 @@ def _verification_candidates(frame: Any, person_boxes: Any) -> list[Any]:
             right = min(width, x + box_width)
             bottom = min(height, y + box_height)
             if right > left and bottom > top:
-                candidates.append(frame[top:bottom, left:right])
+                # dlib rejects non-contiguous NumPy views produced by slicing.
+                candidates.append(frame[top:bottom, left:right].copy())
     except (AttributeError, TypeError, ValueError):
         return [frame]
     return candidates or [frame]
