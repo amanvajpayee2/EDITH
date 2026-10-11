@@ -98,23 +98,16 @@ recognition. This phase supports presence only; it does not identify people.
 
 Set `OWNER_VERIFICATION_ENABLED=1` only after installing the optional
 `face-recognition` package and enrolling the owner. Enrollment is intentionally
-local. For example, with EDITH stopped, run a one-off local script that opens
-the camera, checks the returned frame, and calls
-`OwnerVerifier.enroll(frame)` while one face is visible:
+local. The recommended flow captures multiple samples and averages their
+numeric encodings:
 
 ```python
-import cv2
-from edith.owner_verification import OwnerVerifier
-
-camera = cv2.VideoCapture(0)
-ok, frame = camera.read()
-camera.release()
-if not ok:
-    raise RuntimeError("camera frame unavailable")
-OwnerVerifier(".edith-owner.json").enroll(frame)
+python scripts/enroll_owner.py --camera-index 1 --output .edith-owner.json
 ```
 
-This writes only the numeric face encoding to
+Use the same `CAMERA_INDEX` as the working external camera. The script captures
+eight samples, searches at higher resolution for a face, skips unusable frames,
+and stores only the averaged numeric face encoding in
 `OWNER_ENCODING_FILE` (default `.edith-owner.json`). Do not copy that file to
 cloud storage. The verifier never records or uploads frames. A missing backend,
 missing enrollment, or an unrecognized face is explicitly reported as

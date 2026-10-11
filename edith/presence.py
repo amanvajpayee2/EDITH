@@ -240,7 +240,7 @@ class CameraPresenceWorker:
                         try:
                             identity = (
                                 "owner"
-                                if self.owner_verifier.verify(frame) is True
+                                if self.owner_verifier.verify(frame, boxes) is True
                                 else "unknown"
                             )
                         except (OSError, RuntimeError, ValueError, AttributeError) as error:

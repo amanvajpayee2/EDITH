@@ -2,6 +2,7 @@
 .env
 credentials.json
 .edith-drive-token.json
+.edith-owner.json
 __pycache__/
 *.pyc
 yolo*.pt
