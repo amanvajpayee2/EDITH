@@ -10,6 +10,8 @@ import json
 import os
 from typing import Any
 
+import numpy as np
+
 
 class OwnerVerifier:
     """Enroll and verify one owner using an optional ``face_recognition`` backend."""
@@ -67,15 +69,12 @@ class OwnerVerifier:
             encodings.extend(self._backend.face_encodings(candidate, locations))
         if not encodings:
             return None
-        closest = 0
-        if hasattr(self._backend, "face_distance"):
-            distances = self._backend.face_distance([self._encoding], encodings)
-            closest = min(range(len(distances)), key=lambda index: distances[index])
-        return bool(
-            self._backend.compare_faces(
-                [self._encoding], encodings[closest], self.tolerance
-            )[0]
-        )
+        known = np.asarray(self._encoding, dtype=np.float64)
+        candidates = [
+            np.asarray(encoding, dtype=np.float64) for encoding in encodings
+        ]
+        distances = [float(np.linalg.norm(candidate - known)) for candidate in candidates]
+        return min(distances) <= self.tolerance
 
     def _get_backend(self) -> Any:
         if self._backend is None:

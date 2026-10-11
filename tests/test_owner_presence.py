@@ -20,10 +20,6 @@ class FakeBackend:
     def compare_faces(self, known, candidate, tolerance):
         return [abs(known[0][0] - candidate[0]) <= tolerance]
 
-    def face_distance(self, known, candidates):
-        return [abs(known[0][0] - candidate[0]) for candidate in candidates]
-
-
 class OwnerPresenceTests(unittest.TestCase):
     def test_enrollment_and_unknown_are_local_and_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
