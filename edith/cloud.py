@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Callable
 
 from groq import Groq
-import httpx
 
 from .storage import GoogleDriveStorage
 from .planning import DailyPlanner, parse_planning_command
@@ -18,20 +17,24 @@ class SpeechToText:
         self.sample_rate = sample_rate
 
     def transcribe(self, audio: bytes) -> str:
-        with tempfile.NamedTemporaryFile(prefix=".edith-utterance-", suffix=".wav", delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            prefix=".edith-utterance-", suffix=".wav", delete=False
+        ) as temp_file:
             path = Path(temp_file.name)
         _write_wav(path, audio, self.sample_rate)
         try:
             with path.open("rb") as file:
                 result = self.client.audio.transcriptions.create(
-                    file=(path.name, file.read()), model=self.model, response_format="text"
+                    file=(path.name, file.read()),
+                    model=self.model,
+                    response_format="text",
                 )
             return str(result).strip()
         finally:
             path.unlink(missing_ok=True)
 
 
-class OpenRouterChat:
+class GeminiChat:
     def __init__(
         self,
         api_key: str,
@@ -39,7 +42,13 @@ class OpenRouterChat:
         storage: GoogleDriveStorage,
         acknowledge_daily_plan: Callable[[], None] | None = None,
     ) -> None:
-        self.api_key = api_key
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as error:
+            raise RuntimeError("Gemini SDK unavailable; install google-genai.") from error
+        self.client = genai.Client(api_key=api_key)
+        self._generation_config_type = types.GenerateContentConfig
         self.model = model
         self.storage = storage
         self.conversation_id = storage.active_conversation_id()
@@ -99,35 +108,31 @@ class OpenRouterChat:
         ]
         messages.extend(self.storage.recent_messages(self.conversation_id))
         try:
-            response = httpx.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/edith-voice-core",
-                    "X-Title": "EDITH voice core",
-                },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "provider": {"allow_fallbacks": True},
-                },
-                timeout=httpx.Timeout(45.0, connect=10.0),
+            system_instruction = messages[0]["content"]
+            contents = [
+                {
+                    "role": "model" if message["role"] == "assistant" else "user",
+                    "parts": [{"text": message["content"]}],
+                }
+                for message in messages[1:]
+            ]
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=self._generation_config_type(
+                    system_instruction=system_instruction,
+                    temperature=0.4,
+                ),
             )
-            if response.is_error:
-                try:
-                    detail = response.json().get("error", {}).get("message", response.text)
-                except ValueError:
-                    detail = response.text
-                raise RuntimeError(f"HTTP {response.status_code}: {detail}")
-            payload = response.json()
-            answer = payload["choices"][0]["message"]["content"]
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, RuntimeError) as error:
+            answer = response.text
+        except (KeyError, IndexError, TypeError, ValueError, RuntimeError, OSError) as error:
             self._remove_failed_user_message()
-            raise RuntimeError(f"OpenRouter request failed for model {self.model!r}: {error}") from error
+            raise RuntimeError(
+                f"Gemini request failed for model {self.model!r}: {error}"
+            ) from error
         if not isinstance(answer, str) or not answer.strip():
             self._remove_failed_user_message()
-            raise RuntimeError("OpenRouter returned an empty response")
+            raise RuntimeError("Gemini returned an empty response")
         answer = answer.strip()
         self.storage.append_message(self.conversation_id, "assistant", answer)
         return answer

@@ -6,7 +6,7 @@ import httpx
 from datetime import datetime, time as clock_time
 
 from .audio import AudioInput, PlaybackGuard
-from .cloud import OpenRouterChat, SpeechToText
+from .cloud import GeminiChat, SpeechToText
 from .config import Settings
 from .speaker import Speaker
 from .reminders import ReminderEngine, ReminderWorker
@@ -159,9 +159,9 @@ def run() -> None:
             study_observer=study_observer,
             study_slot_title_patterns=settings.study_slot_title_patterns,
         )
-        chat = OpenRouterChat(
-            settings.openrouter_api_key,
-            settings.openrouter_model,
+        chat = GeminiChat(
+            settings.gemini_api_key,
+            settings.gemini_model,
             storage,
             lambda: reminder_engine.acknowledge_daily_plan(
                 datetime.now().astimezone().date()
@@ -305,7 +305,7 @@ def run() -> None:
             speaker.speak(checkin_answer)
             follow_up_until = time.monotonic() + settings.follow_up_seconds
             continue
-        print(f"Sending to {_console_text(settings.openrouter_model)}...")
+        print(f"Sending to {_console_text(settings.gemini_model)}...")
         try:
             answer = chat.ask(text)
         except (RuntimeError, OSError, httpx.HTTPError) as error:
