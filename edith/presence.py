@@ -221,7 +221,13 @@ class CameraPresenceWorker:
                                 break
                             continue
                         self._debug(f"camera opened: index={self.camera_index}")
-                    except (OSError, RuntimeError, ValueError, AttributeError) as error:
+                    except (
+                        OSError,
+                        RuntimeError,
+                        ValueError,
+                        AttributeError,
+                        TypeError,
+                    ) as error:
                         self._degrade(f"camera could not be opened: {error}")
                         if self._stop.wait(self.interval_seconds):
                             break
@@ -243,7 +249,13 @@ class CameraPresenceWorker:
                                 if self.owner_verifier.verify(frame, boxes) is True
                                 else "unknown"
                             )
-                        except (OSError, RuntimeError, ValueError, AttributeError) as error:
+                        except (
+                            OSError,
+                            RuntimeError,
+                            ValueError,
+                            AttributeError,
+                            TypeError,
+                        ) as error:
                             identity = "unknown"
                             self._degrade(f"owner verification failed: {error}")
                     self._debug(

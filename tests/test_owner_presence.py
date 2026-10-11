@@ -2,10 +2,11 @@ import json
 import os
 import tempfile
 import unittest
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from edith.owner_verification import OwnerVerifier
+from edith.owner_verification import OwnerVerifier, _verification_candidates
 from edith.presence import PresenceState
 
 
@@ -18,6 +19,9 @@ class FakeBackend:
 
     def compare_faces(self, known, candidate, tolerance):
         return [abs(known[0][0] - candidate[0]) <= tolerance]
+
+    def face_distance(self, known, candidates):
+        return [abs(known[0][0] - candidate[0]) for candidate in candidates]
 
 
 class OwnerPresenceTests(unittest.TestCase):
@@ -44,6 +48,11 @@ class OwnerPresenceTests(unittest.TestCase):
             state.update(True, identity="owner")
         self.assertEqual(events, ["owner_returned"])
         self.assertEqual(state.consume_events(), ["owner_returned"])
+
+    def test_person_box_candidate_is_contiguous(self):
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+        candidate = _verification_candidates(frame, [(2, 2, 8, 8)])[0]
+        self.assertTrue(candidate.flags["C_CONTIGUOUS"])
 
     def test_owner_gate_defers_unknown_people(self):
         state = PresenceState(enabled=True, require_owner=True)
