@@ -1,6 +1,6 @@
 # EDITH voice core
 
-This is the first local voice pipeline for EDITH: local wake-word detection, bounded voice-activity capture, Groq Whisper transcription, OpenRouter conversation state, and local `pyttsx3` speaker output.
+This is the first local voice pipeline for EDITH: local wake-word detection, bounded voice-activity capture, Groq Whisper transcription, Gemini conversation state, and local `pyttsx3` speaker output.
 
 ## Setup
 
@@ -11,9 +11,10 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Put the Groq and OpenRouter keys in `.env`. Never commit that file. The
-`OPENROUTER_MODEL` setting defaults to `nvidia/nemotron-3.5-lightning:free`; set it to the exact GLM
-5.3 model ID shown in your OpenRouter account if that is the model you intend to use.
+Put the Groq and Gemini keys in `.env`. Never commit that file. The
+`GEMINI_MODEL` setting defaults to `gemini-2.5-flash`, which is the recommended
+EDITH model for fast, frequent assistant turns. Use `gemini-2.5-pro` only when
+you specifically need deeper reasoning and accept higher latency and cost.
 
 The `WAKEWORD_MODEL_PATH` should point to a local openWakeWord `.onnx` model trained/configured for `EDITH`. The included controller does not upload the always-on microphone stream. Cloud calls begin only after the local detector fires and voice activity produces an utterance.
 

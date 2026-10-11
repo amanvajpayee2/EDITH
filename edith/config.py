@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Settings:
     groq_api_key: str
-    openrouter_api_key: str
-    openrouter_model: str
+    gemini_api_key: str
+    gemini_model: str
     groq_stt_model: str
     wakeword_engine: str
     wakeword_model_path: str
@@ -76,8 +76,8 @@ class Settings:
         load_dotenv()
         return cls(
             groq_api_key=os.getenv("GROQ_API_KEY", ""),
-            openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            openrouter_model=os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free"),
+            gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             groq_stt_model=os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
             wakeword_engine=os.getenv("WAKEWORD_ENGINE", "openwakeword").strip().lower(),
             wakeword_model_path=os.getenv("WAKEWORD_MODEL_PATH", "models/edith.onnx"),
@@ -172,8 +172,8 @@ class Settings:
         missing = []
         if not self.groq_api_key:
             missing.append("GROQ_API_KEY")
-        if not self.openrouter_api_key:
-            missing.append("OPENROUTER_API_KEY")
+        if not self.gemini_api_key:
+            missing.append("GEMINI_API_KEY")
         if missing:
             raise RuntimeError("Missing environment variables: " + ", ".join(missing))
 
