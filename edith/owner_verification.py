@@ -31,12 +31,25 @@ class OwnerVerifier:
         return self._reason
 
     def enroll(self, frame: Any) -> None:
+        self.enroll_many([frame])
+
+    def enroll_many(self, frames: list[Any]) -> None:
         backend = self._get_backend()
-        locations = backend.face_locations(frame)
-        encodings = backend.face_encodings(frame, locations)
-        if len(encodings) != 1:
-            raise ValueError("Enrollment requires exactly one visible face.")
-        self._encoding = [float(value) for value in encodings[0]]
+        samples = []
+        for frame in frames:
+            locations = _face_locations(backend, frame)
+            encodings = backend.face_encodings(frame, locations)
+            if len(encodings) != 1:
+                continue
+            samples.append(encodings[0])
+        if not samples:
+            raise ValueError("Enrollment requires one clear visible face in at least one sample.")
+        dimensions = len(samples[0])
+        averaged = [
+            sum(float(sample[index]) for sample in samples) / len(samples)
+            for index in range(dimensions)
+        ]
+        self._encoding = averaged
         self._reason = None
         parent = os.path.dirname(os.path.abspath(self.encoding_file))
         if parent:
@@ -44,15 +57,25 @@ class OwnerVerifier:
         with open(self.encoding_file, "w", encoding="utf-8") as handle:
             json.dump({"encoding": self._encoding}, handle)
 
-    def verify(self, frame: Any) -> bool | None:
+    def verify(self, frame: Any, person_boxes: Any = None) -> bool | None:
         """Return True for owner, False for known non-owner, None when unknown."""
         if not self.available:
             return None
-        locations = self._backend.face_locations(frame)
-        encodings = self._backend.face_encodings(frame, locations)
+        encodings = []
+        for candidate in _verification_candidates(frame, person_boxes):
+            locations = _face_locations(self._backend, candidate)
+            encodings.extend(self._backend.face_encodings(candidate, locations))
         if not encodings:
             return None
-        return bool(self._backend.compare_faces([self._encoding], encodings[0], self.tolerance)[0])
+        closest = 0
+        if hasattr(self._backend, "face_distance"):
+            distances = self._backend.face_distance([self._encoding], encodings)
+            closest = min(range(len(distances)), key=lambda index: distances[index])
+        return bool(
+            self._backend.compare_faces(
+                [self._encoding], encodings[closest], self.tolerance
+            )[0]
+        )
 
     def _get_backend(self) -> Any:
         if self._backend is None:
@@ -80,3 +103,29 @@ class OwnerVerifier:
             self._encoding = [float(value) for value in values]
         except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as error:
             self._reason = f"owner is not enrolled: {error}"
+
+
+def _face_locations(backend: Any, frame: Any) -> Any:
+    try:
+        return backend.face_locations(frame, number_of_times_to_upsample=2)
+    except TypeError:
+        return backend.face_locations(frame)
+
+
+def _verification_candidates(frame: Any, person_boxes: Any) -> list[Any]:
+    if person_boxes is None:
+        return [frame]
+    candidates = []
+    try:
+        height, width = frame.shape[:2]
+        for box in person_boxes:
+            x, y, box_width, box_height = (int(value) for value in box[:4])
+            left = max(0, x)
+            top = max(0, y)
+            right = min(width, x + box_width)
+            bottom = min(height, y + box_height)
+            if right > left and bottom > top:
+                candidates.append(frame[top:bottom, left:right])
+    except (AttributeError, TypeError, ValueError):
+        return [frame]
+    return candidates or [frame]
