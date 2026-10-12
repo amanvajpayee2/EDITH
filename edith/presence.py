@@ -318,9 +318,18 @@ class CameraPresenceWorker:
                 self.preview_enabled = False
                 cv2.destroyWindow("EDITH camera preview (Q to close)")
                 self._debug("camera preview closed by user")
-        except (OSError, RuntimeError, ValueError, AttributeError) as error:
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            AttributeError,
+            TypeError,
+            getattr(cv2, "error", RuntimeError),
+        ) as error:
             self.preview_enabled = False
-            self._debug(f"camera preview unavailable: {error}")
+            self._debug(
+                f"camera preview unavailable; continuing without preview: {error}"
+            )
 
 
 def _import_cv2() -> Any:
