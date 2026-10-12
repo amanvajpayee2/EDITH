@@ -75,12 +75,17 @@ identity status locally. `CAMERA_PREVIEW_ENABLED` opens an OpenCV window with
 person boxes and labels such as `identity=owner` or `identity=unknown`; press
 `Q` in that window to close the preview. Preview requires a graphical desktop
 session and the GUI OpenCV package. The default `opencv-python-headless`
-package cannot display windows. On a Pi desktop, replace it with:
+package cannot display windows. If preview is enabled on Windows, replace it
+with:
 
 ```bash
 python -m pip uninstall -y opencv-python-headless
-python -m pip install opencv-python
+python -m pip install "opencv-python<5"
 ```
+
+On a Pi desktop, use the same GUI package choice. If the headless package is
+installed, EDITH disables only the preview after reporting the error and keeps
+camera detection running.
 
 Over SSH or on a headless Pi, use debug logs instead. EDITH does not upload or
 persist preview frames. Without `OWNER_VERIFICATION_ENABLED=1` and a valid
