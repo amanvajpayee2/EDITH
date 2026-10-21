@@ -305,7 +305,7 @@ def run() -> None:
                 print(f"EDITH: {_console_text(visitor_report)}")
                 speaker.speak(visitor_report)
                 follow_up_until = time.monotonic() + settings.follow_up_seconds
-        if not return_session_announced:
+        if reminder_engine is not None and not return_session_announced:
             return_prompt = reminder_engine.begin_return_session()
             if return_prompt:
                 print(f"EDITH: {_console_text(return_prompt)}")
@@ -318,7 +318,7 @@ def run() -> None:
                     deferred_notifications.append(reminder)
         except Empty:
             pass
-        if not presence_state.should_defer and deferred_notifications:
+        if speaker is not None and not presence_state.should_defer and deferred_notifications:
             for reminder in deferred_notifications:
                 print(f"EDITH reminder: {_console_text(reminder)}")
                 speaker.speak(reminder)
