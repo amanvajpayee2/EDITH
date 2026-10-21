@@ -1,9 +1,12 @@
 from pathlib import Path
 import tempfile
+import threading
 from datetime import datetime
 from typing import Callable
 
 from groq import Groq
+from google.api_core.exceptions import GoogleAPICallError
+from google.genai.errors import APIError
 
 from .storage import GoogleDriveStorage
 from .planning import DailyPlanner, parse_planning_command
@@ -33,6 +36,15 @@ class SpeechToText:
         finally:
             path.unlink(missing_ok=True)
 
+    def transcribe_file(self, path: str | Path) -> str:
+        with Path(path).open("rb") as file:
+            result = self.client.audio.transcriptions.create(
+                file=(Path(path).name, file.read()),
+                model=self.model,
+                response_format="text",
+            )
+        return str(result).strip()
+
 
 class GeminiChat:
     def __init__(
@@ -55,12 +67,17 @@ class GeminiChat:
         self.planner = DailyPlanner(storage)
         self.analytics = BehaviorAnalytics(storage)
         self._acknowledge_daily_plan = acknowledge_daily_plan or (lambda: None)
+        self._request_lock = threading.Lock()
 
     def record_local_exchange(self, user_text: str, answer: str) -> None:
         self.storage.append_message(self.conversation_id, "user", user_text)
         self.storage.append_message(self.conversation_id, "assistant", answer)
 
     def ask(self, user_text: str) -> str:
+        with self._request_lock:
+            return self._ask_locked(user_text)
+
+    def _ask_locked(self, user_text: str) -> str:
         report_period = _report_period(user_text)
         if report_period:
             answer = self.analytics.format_report(report_period)
@@ -125,7 +142,16 @@ class GeminiChat:
                 ),
             )
             answer = response.text
-        except (KeyError, IndexError, TypeError, ValueError, RuntimeError, OSError) as error:
+        except (
+            APIError,
+            GoogleAPICallError,
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            RuntimeError,
+            OSError,
+        ) as error:
             self._remove_failed_user_message()
             raise RuntimeError(
                 f"Gemini request failed for model {self.model!r}: {error}"

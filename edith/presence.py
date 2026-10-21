@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, time
 import threading
 import time as monotonic_time
+from queue import Queue, Empty
 from typing import Any, Callable
 
 from .owner_verification import OwnerVerifier
@@ -58,9 +59,10 @@ class PresenceState:
                     self._return_event_sent = True
                 self._owner_last_seen = now
                 self._owner_absent_since = None
-            elif not occupied and self._owner_last_seen is not None and self._owner_absent_since is None:
+            elif self._require_owner and self._owner_absent_since is None:
                 self._owner_absent_since = now
-                self._return_event_sent = False
+                if not occupied:
+                    self._return_event_sent = False
             absent = (
                 (now - self._owner_absent_since).total_seconds()
                 if self._owner_absent_since is not None else 0.0
@@ -88,7 +90,13 @@ class PresenceState:
             return events
 
     def owner_absence_seconds(self) -> float:
-        return self.snapshot().owner_absent_seconds
+        with self._lock:
+            if self._owner_absent_since is None:
+                return 0.0
+            return max(
+                0.0,
+                (datetime.now().astimezone() - self._owner_absent_since).total_seconds(),
+            )
 
     def set_return_after_seconds(self, seconds: float) -> None:
         with self._lock:
@@ -190,6 +198,11 @@ class CameraPresenceWorker:
             return
 
         present_count = absent_count = 0
+        next_detection_at = 0.0
+        latest_present = False
+        latest_identity: str | None = None
+        detection_results: Queue[tuple[Any, list[Any], list[float], bool, str | None]] = Queue()
+        detection_thread: threading.Thread | None = None
         capture = None
         try:
             while not self._stop.is_set():
@@ -203,7 +216,7 @@ class CameraPresenceWorker:
                         if self.study_observer is not None:
                             self.study_observer.reset()
                         if self.visitor_recorder is not None:
-                            self.visitor_recorder.stop("camera quiet hours")
+                            self._stop_visitor_recording("camera quiet hours")
                     self.state.set_quiet()
                     self._debug("camera quiet hours; webcam released")
                     present_count = absent_count = 0
@@ -220,6 +233,17 @@ class CameraPresenceWorker:
                             if self._stop.wait(self.interval_seconds):
                                 break
                             continue
+                        if self.visitor_recorder is not None:
+                            try:
+                                capture.set(cv2.CAP_PROP_FPS, self.visitor_recorder.fps)
+                                actual_fps = capture.get(cv2.CAP_PROP_FPS)
+                                if actual_fps and actual_fps > 0:
+                                    self.visitor_recorder.set_capture_fps(actual_fps)
+                                    self._debug(
+                                        f"visitor recording camera fps={actual_fps:.2f}"
+                                    )
+                            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                                self._debug("camera FPS configuration unavailable")
                         self._debug(f"camera opened: index={self.camera_index}")
                     except (
                         OSError,
@@ -232,49 +256,61 @@ class CameraPresenceWorker:
                         if self._stop.wait(self.interval_seconds):
                             break
                         continue
-                if self._stop.wait(self.interval_seconds):
-                    break
                 try:
                     ok, frame = capture.read()
                     if not ok:
                         self._degrade("camera frame unavailable")
                         continue
-                    boxes, scores = detector(frame)
-                    detected = len(boxes) > 0
-                    identity = None
-                    if detected and self.owner_verifier is not None:
-                        try:
-                            identity = (
-                                "owner"
-                                if self.owner_verifier.verify(frame, boxes) is True
-                                else "unknown"
-                            )
-                        except (
-                            OSError,
-                            RuntimeError,
-                            ValueError,
-                            AttributeError,
-                            TypeError,
-                        ) as error:
-                            identity = "unknown"
-                            self._degrade(f"owner verification failed: {error}")
+                    if (
+                        self.visitor_recorder is not None
+                        and getattr(self.visitor_recorder, "recording", False)
+                    ):
+                        self.visitor_recorder.process(
+                            frame, latest_present, latest_identity
+                        )
+                    now = monotonic_time.monotonic()
+                    if now >= next_detection_at and (
+                        detection_thread is None or not detection_thread.is_alive()
+                    ):
+                        next_detection_at = now + self.interval_seconds
+                        detection_frame = (
+                            frame.copy() if hasattr(frame, "copy") else frame
+                        )
+                        detection_thread = threading.Thread(
+                            target=self._detect_async,
+                            args=(detection_frame, detector, detection_results),
+                            daemon=True,
+                        )
+                        detection_thread.start()
+                    try:
+                        detection_frame, boxes, scores, detected, identity = (
+                            detection_results.get_nowait()
+                        )
+                    except Empty:
+                        continue
                     self._debug(
                         f"frame: person={'yes' if detected else 'no'} "
                         f"boxes={len(boxes)} identity={identity or 'not-checked'} "
                         f"scores={','.join(f'{score:.2f}' for score in scores)}"
                     )
                     if self.preview_enabled:
-                        self._show_preview(cv2, frame, boxes, detected, identity)
+                        self._show_preview(
+                            cv2, detection_frame, boxes, detected, identity
+                        )
                     if self.study_observer is not None and self.study_observer.active:
                         self.study_observer.observe(
-                            frame, boxes, person_present=detected
+                            detection_frame, boxes, person_present=detected
                         )
                     present_count = present_count + 1 if detected else 0
                     absent_count = absent_count + 1 if not detected else 0
+                    latest_present = detected
+                    latest_identity = identity
                     if present_count >= self.min_detections:
                         self.state.update(True, identity=identity)
                         if self.visitor_recorder is not None:
-                            self.visitor_recorder.process(frame, True, identity)
+                            self.visitor_recorder.process(
+                                detection_frame, True, identity
+                            )
                     elif absent_count >= self.min_absence:
                         self.state.update(False, identity="unknown" if self.owner_verifier else None)
                         if self.visitor_recorder is not None:
@@ -285,7 +321,47 @@ class CameraPresenceWorker:
             if capture is not None:
                 self._release_capture(capture)
             if self.visitor_recorder is not None:
-                self.visitor_recorder.stop("camera worker stopped")
+                self._stop_visitor_recording("camera worker stopped")
+
+    def _stop_visitor_recording(self, reason: str) -> None:
+        recorder = self.visitor_recorder
+        if recorder is None:
+            return
+        stop_async = getattr(recorder, "stop_async", None)
+        if callable(stop_async):
+            stop_async(reason)
+        else:
+            recorder.stop(reason)
+
+    def _detect_async(
+        self,
+        frame: Any,
+        detector: Callable[[Any], tuple[list[Any], list[float]]],
+        results: Queue[tuple[Any, list[Any], list[float], bool, str | None]],
+    ) -> None:
+        try:
+                boxes, scores = detector(frame)
+                detected = len(boxes) > 0
+                identity = None
+                if detected and self.owner_verifier is not None:
+                    try:
+                        identity = (
+                            "owner"
+                            if self.owner_verifier.verify(frame, boxes) is True
+                            else "unknown"
+                        )
+                    except (
+                        OSError,
+                        RuntimeError,
+                        ValueError,
+                        AttributeError,
+                        TypeError,
+                    ) as error:
+                        identity = "unknown"
+                        self._degrade(f"owner verification failed: {error}")
+                results.put((frame, boxes, scores, detected, identity))
+        except (OSError, RuntimeError, ValueError, AttributeError, TypeError) as error:
+                self._degrade(f"camera detection failed: {error}")
 
     @staticmethod
     def _release_capture(capture: Any) -> None:

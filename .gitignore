@@ -3,6 +3,7 @@
 credentials.json
 .edith-drive-token.json
 .edith-owner.json
+.edith-pending-visitor/
 __pycache__/
 *.pyc
 yolo*.pt

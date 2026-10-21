@@ -1,5 +1,7 @@
 import time
 import sys
+import os
+import threading
 from datetime import timedelta
 from queue import Empty, Queue
 import httpx
@@ -18,9 +20,62 @@ from .study_observer import StudyObserver
 from .visitor_recorder import VisitorRecorder
 
 
+def _retry_chat_request(chat: GeminiChat, text: str, results: Queue) -> None:
+    delay = 1.0
+    while True:
+        try:
+            results.put(("success", text, chat.ask(text)))
+            return
+        except (RuntimeError, OSError, httpx.HTTPError) as error:
+            print(
+                f"EDITH Gemini retry failed; trying again in {delay:.0f}s: "
+                f"{_console_text(str(error))}"
+            )
+            time.sleep(delay)
+            delay = min(delay * 2, 30.0)
+
+
 def _console_text(value: str) -> str:
     encoding = sys.stdout.encoding or "utf-8"
     return value.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def _visitor_return_report(storage: GoogleDriveStorage) -> str | None:
+    data = storage.read_json("metadata", "visitor-summaries.json", {"visits": []})
+    visits = data.get("visits", [])
+    if not visits:
+        return None
+    reports = []
+    for visit in visits:
+        try:
+            entered = datetime.fromisoformat(visit["entered_at"]).astimezone()
+            when = entered.strftime("%I:%M %p").lstrip("0")
+        except (KeyError, TypeError, ValueError):
+            when = "an unknown time"
+        name = visit.get("name", "unknown visitor")
+        reason = visit.get("reason", "no reason provided")
+        conversation = visit.get("conversation", "").strip()
+        if name != "unknown visitor" and reason not in {
+            "no reason provided",
+            "see recorded conversation",
+            "conversation could not be transcribed",
+        }:
+            reports.append(
+                f"{name} came to the room at {when}. "
+                f"When asked, they said they came because {reason}."
+            )
+        elif conversation:
+            reports.append(
+                f"a visitor came to the room at {when}. "
+                f"The recorded WhisperFlow transcript was: {conversation}"
+            )
+        else:
+            reports.append(
+                f"someone reported as {name} came to the room at {when}. "
+                f"The reason they gave was {reason}."
+            )
+    storage.write_json("metadata", "visitor-summaries.json", {"visits": []})
+    return "Sir, while you were not in the room, " + " ".join(reports)
 
 
 def run() -> None:
@@ -78,7 +133,21 @@ def run() -> None:
             audio_sample_rate=settings.visitor_audio_sample_rate,
             audio_codec=settings.visitor_audio_codec,
             ffmpeg_path=settings.visitor_ffmpeg_path,
+            fps=settings.visitor_video_fps,
+            transcribe_audio=stt.transcribe_file,
         )
+        if settings.visitor_audio_enabled:
+            import shutil
+            if not (
+                shutil.which(settings.visitor_ffmpeg_path)
+                or os.path.isfile(settings.visitor_ffmpeg_path)
+            ):
+                print(
+                    "EDITH visitor audio disabled: FFmpeg was not found. "
+                    "Install FFmpeg or set VISITOR_FFMPEG_PATH to ffmpeg.exe."
+                )
+                visitor_recorder.audio_enabled = False
+        visitor_recorder.retry_pending_uploads()
     elif settings.visitor_recording_enabled:
         print(
             "EDITH visitor recording disabled: owner verification must be enabled "
@@ -145,6 +214,7 @@ def run() -> None:
     playback = PlaybackGuard(settings.playback_cooldown_seconds)
     pending_notifications: Queue[str] = Queue()
     deferred_notifications: list[str] = []
+    completed_retries: Queue[tuple[str, str, str]] = Queue()
     speaker = None
     if not settings.wakeword_test_mode:
         speaker = Speaker(playback)
@@ -195,17 +265,27 @@ def run() -> None:
         detector = WakeWordDetector(settings.wakeword_engine, settings.wakeword_model_path, settings.wakeword_threshold)
         print("EDITH is listening locally for the wake word.")
 
+    return_session_announced = False
     while True:
         if playback.blocked:
             time.sleep(0.1)
             continue
         if speaker is not None:
+            try:
+                result, request_text, answer = completed_retries.get_nowait()
+            except Empty:
+                pass
+            else:
+                print(f"EDITH: {_console_text(answer)}")
+                speaker.speak(answer)
+                follow_up_until = time.monotonic() + settings.follow_up_seconds
             while True:
                 try:
                     event = presence_events.get_nowait()
                 except Empty:
                     break
                 if event == "owner_returned":
+                    return_session_announced = False
                     greeting = "Welcome back, Aman."
                     print(f"EDITH: {greeting}")
                     speaker.speak(greeting)
@@ -213,7 +293,24 @@ def run() -> None:
                     if return_prompt:
                         print(f"EDITH: {_console_text(return_prompt)}")
                         speaker.speak(return_prompt)
+                        return_session_announced = True
                     follow_up_until = time.monotonic() + settings.follow_up_seconds
+        if (
+            speaker is not None
+            and storage is not None
+            and presence_state.should_accept_commands
+        ):
+            visitor_report = _visitor_return_report(storage)
+            if visitor_report:
+                print(f"EDITH: {_console_text(visitor_report)}")
+                speaker.speak(visitor_report)
+                follow_up_until = time.monotonic() + settings.follow_up_seconds
+        if not return_session_announced:
+            return_prompt = reminder_engine.begin_return_session()
+            if return_prompt:
+                print(f"EDITH: {_console_text(return_prompt)}")
+                speaker.speak(return_prompt)
+                return_session_announced = True
         try:
             if time.monotonic() >= follow_up_until:
                 while True:
@@ -227,6 +324,24 @@ def run() -> None:
                 speaker.speak(reminder)
                 follow_up_until = time.monotonic() + settings.follow_up_seconds
             deferred_notifications.clear()
+        if visitor_recorder is not None and visitor_recorder.interview_active:
+            utterance = audio.utterance(
+                settings.silence_seconds,
+                settings.max_recording_seconds,
+                min_voiced_frames=settings.min_voiced_frames,
+                min_rms=settings.min_audio_rms,
+            )
+            if utterance:
+                print("Transcribing visitor response...")
+                visitor_answer = stt.transcribe(utterance)
+                if visitor_answer:
+                    visitor_prompt = visitor_recorder.accept_interview_answer(
+                        visitor_answer
+                    )
+                    if visitor_prompt:
+                        print(f"EDITH: {_console_text(visitor_prompt)}")
+                        speaker.speak(visitor_prompt)
+            continue
         if not presence_state.should_accept_commands:
             time.sleep(0.1)
             continue
@@ -238,6 +353,7 @@ def run() -> None:
             utterance = audio.utterance(
                 settings.silence_seconds,
                 settings.max_recording_seconds,
+                start_timeout_seconds=0.5,
                 min_voiced_frames=settings.min_voiced_frames,
                 min_rms=settings.min_audio_rms,
             )
@@ -310,7 +426,17 @@ def run() -> None:
             answer = chat.ask(text)
         except (RuntimeError, OSError, httpx.HTTPError) as error:
             print(f"EDITH error: {_console_text(str(error))}")
-            follow_up_until = 0.0
+            retry_message = (
+                "Sir, that request failed. I am retrying it in the background."
+            )
+            speaker.speak(retry_message)
+            threading.Thread(
+                target=_retry_chat_request,
+                args=(chat, text, completed_retries),
+                name="edith-gemini-retry",
+                daemon=True,
+            ).start()
+            follow_up_until = time.monotonic() + settings.follow_up_seconds
             continue
         print(f"EDITH: {_console_text(answer)}")
         speaker.speak(answer)
