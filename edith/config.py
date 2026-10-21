@@ -51,7 +51,7 @@ class Settings:
     camera_preview_enabled: bool
     owner_verification_enabled: bool
     owner_encoding_file: str
-    owner_return_after_minutes: int
+    owner_return_after_minutes: float
     owner_face_tolerance: float
     visitor_recording_enabled: bool
     visitor_drive_collection: str
@@ -64,6 +64,7 @@ class Settings:
     visitor_audio_sample_rate: int
     visitor_audio_codec: str
     visitor_ffmpeg_path: str
+    visitor_video_fps: float
     study_observer_enabled: bool
     study_desk_region: Tuple[float, float, float, float]
     study_bed_region: Tuple[float, float, float, float]
@@ -138,11 +139,13 @@ class Settings:
             camera_preview_enabled=_optional_bool(os.getenv("CAMERA_PREVIEW_ENABLED")),
             owner_verification_enabled=_optional_bool(os.getenv("OWNER_VERIFICATION_ENABLED")),
             owner_encoding_file=os.getenv("OWNER_ENCODING_FILE", ".edith-owner.json"),
-            owner_return_after_minutes=int(os.getenv("OWNER_RETURN_AFTER_MINUTES", "30")),
+            owner_return_after_minutes=float(
+                os.getenv("OWNER_RETURN_AFTER_MINUTES", "30")
+            ),
             owner_face_tolerance=float(os.getenv("OWNER_FACE_TOLERANCE", "0.48")),
             visitor_recording_enabled=_optional_bool(os.getenv("VISITOR_RECORDING_ENABLED")),
             visitor_drive_collection=os.getenv("VISITOR_DRIVE_COLLECTION", "visitor-recordings"),
-            visitor_max_session_duration_seconds=float(os.getenv("VISITOR_MAX_SESSION_DURATION_SECONDS", "120")),
+            visitor_max_session_duration_seconds=float(os.getenv("VISITOR_MAX_SESSION_DURATION_SECONDS", "0")),
             visitor_recording_announcement=os.getenv(
                 "VISITOR_RECORDING_ANNOUNCEMENT",
                 "This room is monitored. Recording has started.",
@@ -156,6 +159,7 @@ class Settings:
             visitor_audio_sample_rate=int(os.getenv("VISITOR_AUDIO_SAMPLE_RATE", "16000")),
             visitor_audio_codec=os.getenv("VISITOR_AUDIO_CODEC", "aac"),
             visitor_ffmpeg_path=os.getenv("VISITOR_FFMPEG_PATH", "ffmpeg"),
+            visitor_video_fps=float(os.getenv("VISITOR_VIDEO_FPS", "60")),
             study_observer_enabled=_optional_bool(os.getenv("STUDY_OBSERVER_ENABLED")),
             study_desk_region=_region(os.getenv("STUDY_DESK_REGION", "0,0.5,0.5,0.5")),
             study_bed_region=_region(os.getenv("STUDY_BED_REGION", "0.5,0.5,0.5,0.5")),

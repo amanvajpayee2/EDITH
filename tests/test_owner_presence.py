@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+import time
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -58,6 +59,41 @@ class OwnerPresenceTests(unittest.TestCase):
         state.update(True, identity="owner")
         self.assertFalse(state.should_defer)
         self.assertTrue(state.should_accept_commands)
+
+    def test_unknown_presence_starts_owner_absence_timer(self):
+        state = PresenceState(enabled=True, require_owner=True)
+        state.update(True, identity="owner")
+        state.update(True, identity="unknown")
+        time.sleep(0.001)
+        self.assertGreater(state.owner_absence_seconds(), 0.0)
+
+    def test_return_event_can_start_when_camera_saw_room_before_owner(self):
+        events = []
+        state = PresenceState(on_event=events.append, require_owner=True)
+        state.set_return_after_seconds(60)
+        first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        with patch("edith.presence.datetime") as clock:
+            clock.now.return_value = first
+            state.update(False, identity="unknown")
+            clock.now.return_value = first + timedelta(seconds=61)
+            state.update(True, identity="owner")
+        self.assertEqual(events, ["owner_returned"])
+
+    def test_transient_unknown_after_return_does_not_repeat_greeting(self):
+        events = []
+        state = PresenceState(on_event=events.append, require_owner=True)
+        state.set_return_after_seconds(60)
+        first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        with patch("edith.presence.datetime") as clock:
+            clock.now.return_value = first
+            state.update(False, identity="unknown")
+            clock.now.return_value = first + timedelta(seconds=61)
+            state.update(True, identity="owner")
+            clock.now.return_value = first + timedelta(seconds=62)
+            state.update(True, identity="unknown")
+            clock.now.return_value = first + timedelta(seconds=123)
+            state.update(True, identity="owner")
+        self.assertEqual(events, ["owner_returned"])
 
 
 if __name__ == "__main__":

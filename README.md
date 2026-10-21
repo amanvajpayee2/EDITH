@@ -123,11 +123,17 @@ missing enrollment, or an unrecognized face is explicitly reported as
 When verification is enabled, `PresenceSnapshot.identity` is `owner` only for
 a successful match and `unknown` otherwise. `PresenceState` tracks the
 owner's absence duration and invokes its optional `on_event` callback with
-`owner_returned` after the configured 30-minute absence when the owner is
-next confirmed. EDITH speaks a local “Welcome back, Aman” greeting for that
-event. While verification is enabled, reminders and wake-word commands are
+`owner_returned` after the configured absence when the owner is next confirmed.
+The timer can begin from an empty or unknown room observation, so restarting
+EDITH while you are away does not permanently lose the next return event.
+EDITH speaks a local “Welcome back, Aman” greeting for that event. While
+verification is enabled, reminders and wake-word commands are
 held unless the latest camera observation confirms the owner; this is a
 fail-closed privacy behavior, so an unseen face can temporarily block EDITH.
+The default desktop tuning samples the camera every 2 seconds and accepts one
+high-confidence owner/person detection, reducing return-recognition latency.
+Set `CAMERA_MIN_CONSECUTIVE_DETECTIONS=2` if your camera angle produces
+occasional false detections.
 Visitor recording and study observation remain separately opt-in features;
 both pause while the camera power schedule is quiet.
 
@@ -272,8 +278,10 @@ the owner, EDITH announces recording, writes a bounded MP4 to the
 operating system temporary directory, and uploads it to the configured
 `VISITOR_DRIVE_COLLECTION`. The temporary file is deleted after both successful and
 failed uploads; there is no local or silent cloud fallback. Owner-confirmed sessions
-are never recorded. `VISITOR_MAX_SESSION_DURATION_SECONDS`, announcement text, and
-retention metadata are configurable. At startup, recordings older than
+are never recorded. `VISITOR_MAX_SESSION_DURATION_SECONDS` defaults to `0`,
+meaning recording continues until the room is empty; set a positive value to
+enforce a safety cap. Announcement text and retention metadata are configurable.
+At startup, recordings older than
 `VISITOR_RETENTION_DAYS` (default 30 days) are deleted from the configured
 Drive collection. Set it to `0` to disable automatic cleanup.
 
@@ -290,5 +298,45 @@ WAV, source video, and muxed intermediates are always deleted after upload or
 failure. Audio starts after the first video writer frame is initialized, so exact
 sub-frame synchronization is not guaranteed; muxing uses `-shortest`. MP4
 encoding still depends on an installed OpenCV codec. Google Drive requires OAuth
+
+Visitor output defaults to `VISITOR_VIDEO_FPS=60`. This controls the output
+container rate. EDITH requests that rate from the webcam and then uses the
+camera's reported rate for the video writer, preventing a 30-FPS camera from
+being played back at double speed. While recording, EDITH captures camera
+frames continuously and only runs person/face inference at the normal presence
+sampling interval.
+
+When an unknown visitor is detected, EDITH asks them to state their name and
+reason for entering. These answers are self-reported and are not a substitute
+for identity verification. The visit summary is retained in the Drive metadata
+store and is reported once, with the visit time, during the next owner-return
+greeting. Summaries are cleared after they are reported.
+
+For visitor audio, install FFmpeg and make it available to EDITH:
+
+```powershell
+winget install Gyan.FFmpeg.Shared
+```
+
+Restart the terminal and verify `ffmpeg -version`, or set
+`VISITOR_FFMPEG_PATH` to the full path of `ffmpeg.exe`. EDITH disables visitor
+audio at startup when FFmpeg is unavailable instead of repeatedly recording
+WAV files that cannot be muxed.
+
+Visitor uploads use three attempts with backoff. If Google Drive still closes
+the connection (for example, an SSL EOF during a transient network failure),
+the completed MP4 is preserved in `.edith-pending-visitor` and retried the next
+time EDITH starts. The file is deleted only after a successful upload.
+Drive upload and visitor-audio transcription run asynchronously after recording
+ends, so network latency does not block camera presence or owner-return
+detection.
+
+Visitor audio is transcribed with the configured WhisperFlow/Groq model for
+validation and fallback. The primary visitor report uses the two answers
+captured during the explicit name/reason interview, so EDITH's own prompts or
+noise in the full-room recording cannot become the visitor's name or reason.
+If the interview answers are unavailable, EDITH reports the cleaned WhisperFlow
+transcript; it does not silently claim that EDITH's announcement was said by
+the visitor.
 credentials and the `drive.file` scope; upload failures are logged and the
 recording is discarded.
