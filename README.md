@@ -2,6 +2,7 @@
 
 This is the first local voice pipeline for EDITH: local wake-word detection, bounded voice-activity capture, Groq Whisper transcription, Gemini conversation state, and local `pyttsx3` speaker output.
 
+
 ## Setup
 
 ```powershell
